@@ -1,0 +1,106 @@
+import frappe
+import json
+import uuid
+from frappe.utils import now
+
+
+def get_device_id():
+    """
+    MASTER: Always returns "MASTER"
+    CHILD:  Returns unique ID like "A", "B", "C"
+    
+    This identifies which offline instance made the change.
+    """
+    
+    # Check if this is master or child
+    is_master = frappe.db.get_value("Sync Configuration", None, "is_master")
+    
+    if is_master:
+        # ========== MASTER ==========
+        return "MASTER"
+    else:
+        # ========== CHILD ==========
+        # Get or create unique device ID
+        device_id = frappe.db.get_value("System Settings", None, "custom_device_id")
+        
+        if not device_id:
+            device_id = str(uuid.uuid4())[:8].upper()
+            settings = frappe.get_doc("System Settings")
+            settings.custom_device_id = device_id
+            settings.save(ignore_permissions=True)
+        
+        return device_id
+
+
+def capture_change(doc, method=None):
+    """
+    BOTH MASTER AND OFFLINE
+    Capture every document change into transaction log
+    
+    This runs automatically when:
+    - after_insert: Document is created
+    - after_save: Document is updated
+    - after_submit: Document is submitted
+    - after_amend: Document is amended
+    - after_cancel: Document is cancelled
+    - before_delete: Document is deleted
+    """
+    
+    # Skip if in special modes
+    if frappe.flags.in_rollback or frappe.flags.in_patch or frappe.flags.sync_in_progress:
+        return
+    
+    # Import excluded list
+    from sync_app.hooks import SYNC_EXCLUDED_DOCTYPES
+    
+    # Skip excluded doctypes
+    if doc.doctype in SYNC_EXCLUDED_DOCTYPES:
+        return
+    
+    # Determine what operation happened
+    operation = _determine_operation(doc, method)
+    
+    try:
+        # Create transaction log entry
+        log = frappe.new_doc("Sync Transaction Log")
+        log.timestamp = now()
+        log.doctype_name = doc.doctype
+        log.document_name = doc.name
+        log.operation = operation
+        log.doc_data = json.dumps(doc.as_dict(), default=str)
+        log.synced = 0
+        log.sync_status = "pending"
+        log.device_id = get_device_id()
+        log.server_version = frappe.get_value("System Settings", None, "app_version") or "unknown"
+        log.sync_attempt_count = 0
+        
+        # Set flag to prevent recursive captures
+        frappe.flags.sync_in_progress = True
+        log.insert(ignore_permissions=True)
+        frappe.flags.sync_in_progress = False
+        
+    except Exception as e:
+        frappe.log_error(f"Failed to capture sync transaction: {str(e)}", "Sync Capture Error")
+
+
+def _determine_operation(doc, method):
+    """
+    Determine what operation this is based on the hook method name
+    """
+    if not method:
+        return "update"
+    
+    # Remove hook prefix
+    method = method.replace("after_", "").replace("before_", "")
+    
+    # Map to operation names
+    operation_map = {
+        "insert": "create",
+        "save": "update",
+        "submit": "submit",
+        "amend": "amend",
+        "cancel": "cancel",
+        "delete": "delete",
+    }
+    
+    return operation_map.get(method, "update")
