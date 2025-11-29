@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
- "creation": "2025-11-28 13:23:21.644067",
+ "creation": "2025-11-29 10:35:22.054632",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -72,7 +72,7 @@
  "modified_by": "Administrator",
  "module": "Sync App",
  "name": "Sync Configuration",
- "owner": "admin@admin.com",
+ "owner": "Administrator",
  "permissions": [
   {
    "create": 1,

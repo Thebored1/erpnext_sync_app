@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
- "creation": "2025-11-28 13:06:20.868330",
+ "creation": "2025-11-29 10:35:21.057852",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -101,7 +101,7 @@
  "modified_by": "Administrator",
  "module": "Sync App",
  "name": "Sync Transaction Log",
- "owner": "admin@admin.com",
+ "owner": "Administrator",
  "permissions": [
   {
    "create": 1,
