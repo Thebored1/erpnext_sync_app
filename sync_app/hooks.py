@@ -53,10 +53,13 @@ SYNC_EXCLUDED_DOCTYPES = [
 # Make sync endpoints available
 fixtures = [
     {
-        "doctype": "Custom Role",
-        "filters": {
-            "role_name": "Sync Manager"
-        }
+        "dt": "Role",  # Use "Role" not "Custom Role"
+        "filters": [["name", "=", "Sync Manager"]]  
+    },
+    # Export all doctypes from your Sync App module
+    {
+        "dt": "DocType",
+        "filters": [["module", "=", "Sync App"]]
     }
 ]
 
