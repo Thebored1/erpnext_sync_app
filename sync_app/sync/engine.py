@@ -23,7 +23,7 @@ class OfflineSyncEngine:
         self.api_key = config.api_key
         self.api_secret = config.api_secret
         
-        # Create authenticated session
+        # Create authenticated session with HTTP Basic Auth (like curl uses)
         self.session = requests.Session()
         self.session.auth = (self.api_key, self.api_secret)
         self.session.headers.update({
@@ -55,8 +55,16 @@ class OfflineSyncEngine:
             dict with sync results
         """
         
-        # Get MY device ID
-        my_device_id = frappe.db.get_value("System Settings", None, "custom_device_id")
+        # Get MY device ID from Sync Configuration
+        my_device_id = frappe.db.get_value("Sync Configuration", None, "custom_device_id")
+        
+        if not my_device_id:
+            return {
+                "status": "error",
+                "message": "Device ID not configured. Please save Sync Configuration to generate device ID.",
+                "stats": self.stats,
+                "direction": "up"
+            }
         
         # Query MY pending logs
         pending = frappe.get_list(
@@ -83,6 +91,7 @@ class OfflineSyncEngine:
             "total": len(pending),
             "synced": 0,
             "failed": 0,
+            "skipped": 0,
             "collisions_renamed": [],
             "errors": [],
             "stats": self.stats,
@@ -94,17 +103,47 @@ class OfflineSyncEngine:
                 log_doc = frappe.get_doc("Sync Transaction Log", log_entry.name)
                 self._sync_single_to_master(log_doc, results)
                 results["synced"] += 1
-            except Exception as e:
-                log_doc.sync_attempt_count = cint(log_doc.sync_attempt_count) + 1
-                log_doc.sync_status = "failed"
-                log_doc.error_message = str(e)[:500]
+                # Mark as synced
+                log_doc.sync_status = "synced"
+                log_doc.error_message = None
                 log_doc.save(ignore_permissions=True)
-                results["failed"] += 1
-                results["errors"].append({
-                    "log": log_entry.name,
-                    "error": str(e),
-                    "attempt": log_doc.sync_attempt_count
-                })
+            except Exception as e:
+                error_msg = str(e)
+                log_doc.sync_attempt_count = cint(log_doc.sync_attempt_count) + 1
+                
+                # Check if this is a permanent error that should be skipped
+                is_permanent_error = (
+                    "does not exist on master server" in error_msg or
+                    "not found on master server" in error_msg or
+                    "ImportError" in error_msg or
+                    "No module named" in error_msg
+                )
+                
+                if is_permanent_error:
+                    # Skip this log - don't retry it
+                    log_doc.sync_status = "skipped"
+                    log_doc.error_message = f"SKIPPED: {error_msg[:450]}"
+                    results["skipped"] += 1
+                    results["errors"].append({
+                        "log": log_entry.name,
+                        "error": error_msg,
+                        "status": "skipped",
+                        "reason": "Permanent error - DocType or module not found on master"
+                    })
+                else:
+                    # Temporary error - mark as failed and will retry
+                    log_doc.sync_status = "failed"
+                    log_doc.error_message = error_msg[:500]
+                    results["failed"] += 1
+                    results["errors"].append({
+                        "log": log_entry.name,
+                        "error": error_msg,
+                        "status": "failed",
+                        "attempt": log_doc.sync_attempt_count
+                    })
+                
+                log_doc.save(ignore_permissions=True)
+
         
         results["stats"] = self.stats
         return results
@@ -202,16 +241,31 @@ class OfflineSyncEngine:
             dict with sync results
         """
         
-        # Get MY device ID
-        my_device_id = frappe.db.get_value("System Settings", None, "custom_device_id")
+        # Get MY device ID and last sync time from Sync Configuration
+        config = frappe.get_doc("Sync Configuration")
+        my_device_id = config.custom_device_id
+        last_sync = config.last_down_sync
         
-        # Query MASTER for changes NOT from me
+        if not my_device_id:
+            return {
+                "status": "error",
+                "message": "Device ID not configured. Please save Sync Configuration to generate device ID.",
+                "direction": "down"
+            }
+        
+        # Prepare filters
+        filters = [["device_id", "!=", my_device_id]]
+        if last_sync:
+            filters.append(["timestamp", ">", last_sync])
+            
+        # Query MASTER for changes NOT from me AND after last sync
         try:
+            import json
             response = self.session.get(
                 f"{self.master_url}/api/resource/Sync Transaction Log",
                 params={
-                    "filters": [["device_id", "!=", my_device_id]],  # <-- NOT MINE
-                    "fields": ["name", "doctype_name", "document_name", "operation", "doc_data", "device_id"],
+                    "filters": json.dumps(filters),  # Serialize as JSON string
+                    "fields": json.dumps(["name", "doctype_name", "document_name", "operation", "doc_data", "device_id", "timestamp"]),  # Serialize as JSON string
                     "order_by": "timestamp asc",
                     "limit_page_length": batch_size
                 }
@@ -238,25 +292,45 @@ class OfflineSyncEngine:
                 "total": len(remote_logs),
                 "synced": 0,
                 "failed": 0,
+                "skipped": 0,
                 "errors": [],
                 "direction": "down"
             }
+            
+            last_log_timestamp = None
             
             for remote_log in remote_logs:
                 try:
                     self._apply_remote_change(remote_log)
                     results["synced"] += 1
+                    last_log_timestamp = remote_log.get("timestamp")
                 except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append({
-                        "doc": remote_log.get("document_name"),
-                        "error": str(e)
-                    })
+                    # Same error handling as sync_up
+                    error_msg = str(e)
+                    is_permanent_error = (
+                        "does not exist" in error_msg or
+                        "not found" in error_msg or
+                        "ImportError" in error_msg or
+                        "No module named" in error_msg
+                    )
+                    
+                    if is_permanent_error:
+                        results["skipped"] += 1
+                        # If skipped, we still consider it "processed" for timestamp purposes
+                        # so we don't get stuck on it forever
+                        last_log_timestamp = remote_log.get("timestamp")
+                    else:
+                        results["failed"] += 1
+                        results["errors"].append({
+                            "doc": remote_log.get("document_name"),
+                            "error": str(e)
+                        })
             
-            # Update last sync time
-            config = frappe.get_doc("Sync Configuration")
-            config.last_down_sync = frappe.utils.now()
-            config.save(ignore_permissions=True)
+            # Update last sync time to the timestamp of the last successfully processed (or skipped) log
+            if last_log_timestamp:
+                config.last_down_sync = last_log_timestamp
+                config.save(ignore_permissions=True)
+                frappe.db.commit()
             
             return results
         
@@ -279,13 +353,22 @@ class OfflineSyncEngine:
         
         try:
             if operation == "create":
-                doc = frappe.new_doc(doctype)
-                for field, value in doc_data.items():
-                    if field not in ["name", "creation", "modified", "modified_by", "owner"]:
-                        if hasattr(doc, field):
-                            doc.set(field, value)
-                doc.name = doc_name
-                doc.insert(ignore_permissions=True)
+                if frappe.db.exists(doctype, doc_name):
+                    # If it already exists, update it instead (idempotency)
+                    doc = frappe.get_doc(doctype, doc_name)
+                    for field, value in doc_data.items():
+                        if field not in ["name", "creation", "modified", "modified_by", "owner"]:
+                            if hasattr(doc, field):
+                                doc.set(field, value)
+                    doc.save(ignore_permissions=True)
+                else:
+                    doc = frappe.new_doc(doctype)
+                    for field, value in doc_data.items():
+                        if field not in ["name", "creation", "modified", "modified_by", "owner"]:
+                            if hasattr(doc, field):
+                                doc.set(field, value)
+                    doc.name = doc_name
+                    doc.insert(ignore_permissions=True)
             
             elif operation in ["update", "amend"]:
                 if frappe.db.exists(doctype, doc_name):
@@ -342,7 +425,14 @@ class OfflineSyncEngine:
         
         response = self.session.post(endpoint, json=clean)
         if response.status_code not in [200, 201]:
-            raise Exception(f"Create failed: {response.text}")
+            error_text = response.text
+            # Check if it's a DocType not found error
+            if "ImportError" in error_text or "No module named" in error_text:
+                raise Exception(f"DocType '{doctype}' does not exist on master server. Please install the app containing this DocType on the master first.")
+            elif "DoesNotExistError" in error_text:
+                raise Exception(f"DocType '{doctype}' not found on master server.")
+            else:
+                raise Exception(f"Create failed: {error_text[:500]}")  # Limit error message length
     
     def _update_on_master(self, endpoint, doc_data, doctype):
         """Update document on master"""
@@ -351,7 +441,11 @@ class OfflineSyncEngine:
         
         response = self.session.put(endpoint, json=clean)
         if response.status_code not in [200]:
-            raise Exception(f"Update failed: {response.text}")
+            error_text = response.text
+            if "DoesNotExistError" in error_text:
+                raise Exception(f"Document does not exist on master server.")
+            else:
+                raise Exception(f"Update failed: {error_text[:500]}")
     
     def _action_on_master(self, endpoint, action, doctype):
         """Perform an action (submit, cancel, amend) on master"""

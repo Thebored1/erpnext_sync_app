@@ -7,29 +7,36 @@ from frappe.utils import now
 def get_device_id():
     """
     MASTER: Always returns "MASTER"
-    CHILD:  Returns unique ID like "A", "B", "C"
+    CHILD:  Returns unique ID like "A1B2C3D4"
     
     This identifies which offline instance made the change.
+    Reads from Sync Configuration's custom_device_id field.
     """
     
-    # Check if this is master or child
-    is_master = frappe.db.get_value("Sync Configuration", None, "is_master")
+    # Get device ID from Sync Configuration
+    device_id = frappe.db.get_value("Sync Configuration", None, "custom_device_id")
     
-    if is_master:
-        # ========== MASTER ==========
-        return "MASTER"
-    else:
-        # ========== CHILD ==========
-        # Get or create unique device ID
-        device_id = frappe.db.get_value("System Settings", None, "custom_device_id")
+    if not device_id:
+        # If not set, check if this is master or child
+        is_master = frappe.db.get_value("Sync Configuration", None, "is_master")
         
-        if not device_id:
+        if is_master:
+            device_id = "MASTER"
+        else:
+            # Generate a new device ID
             device_id = str(uuid.uuid4())[:8].upper()
-            settings = frappe.get_doc("System Settings")
-            settings.custom_device_id = device_id
-            settings.save(ignore_permissions=True)
         
-        return device_id
+        # Save it to Sync Configuration
+        try:
+            config = frappe.get_doc("Sync Configuration")
+            config.custom_device_id = device_id
+            config.save(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception as e:
+            frappe.log_error(f"Failed to save device_id: {str(e)}", "Sync Device ID Error")
+    
+    return device_id
+
 
 
 def capture_change(doc, method=None):

@@ -13,14 +13,18 @@ def sync_up_to_master(batch_size=50):
         from sync_app.sync.engine import OfflineSyncEngine
         engine = OfflineSyncEngine()
         results = engine.sync_up(batch_size=batch_size)
-        return {
-            "status": "success",
-            "message": f"Synced up {results['synced']} changes. {results['failed']} failed.",
-            "details": results
-        }
+        
+        # Ensure results always has a status field
+        if not isinstance(results, dict):
+            results = {"status": "success", "message": str(results)}
+        elif "status" not in results:
+            results["status"] = "success"
+            
+        return results
     except Exception as e:
         frappe.log_error(str(e), "Sync Up Failed")
         return {"status": "error", "message": str(e)}
+
 
 
 @frappe.whitelist()
@@ -34,11 +38,14 @@ def sync_down_from_master(batch_size=50):
         from sync_app.sync.engine import OfflineSyncEngine
         engine = OfflineSyncEngine()
         results = engine.sync_down(batch_size=batch_size)
-        return {
-            "status": "success",
-            "message": f"Synced down {results.get('synced', 0)} changes from other clients.",
-            "details": results
-        }
+        
+        # Ensure results always has a status field
+        if not isinstance(results, dict):
+            results = {"status": "success", "message": str(results)}
+        elif "status" not in results:
+            results["status"] = "success"
+            
+        return results
     except Exception as e:
         frappe.log_error(str(e), "Sync Down Failed")
         return {"status": "error", "message": str(e)}

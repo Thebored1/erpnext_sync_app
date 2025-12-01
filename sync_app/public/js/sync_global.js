@@ -2,7 +2,7 @@
 
 // We use $(function() { ... }) instead of frappe.ready() 
 // because it is standard jQuery and works 100% of the time.
-$(function() {
+$(function () {
     // Safety check: Ensure 'frappe' object exists before using it
     if (typeof frappe === 'undefined' || typeof frappe.call === 'undefined') {
         console.warn("Sync App: Frappe not loaded yet.");
@@ -15,30 +15,96 @@ $(function() {
     console.log("Sync App: Initializing...");
 
     // 2. Define the Sync Logic
-    const run_sync_up = function() {
+    const run_sync_up = function () {
         frappe.confirm('Push changes to Master?', () => {
+            console.log('Sync App: Starting sync up...');
             frappe.call({
                 method: 'sync_app.sync.api.sync_up_to_master',
                 freeze: true,
                 freeze_message: 'Pushing...',
-                callback: (r) => { if(!r.exc) frappe.msgprint(r.message); }
+                callback: (r) => {
+                    console.log('Sync App: Sync up response:', r);
+                    if (!r.exc) {
+                        if (r.message && r.message.status === 'success') {
+                            let msg = r.message.message || 'Synced successfully';
+
+                            // Add details about skipped/failed items
+                            let details = [];
+                            if (r.message.skipped > 0) details.push(`${r.message.skipped} skipped`);
+                            if (r.message.failed > 0) details.push(`${r.message.failed} failed`);
+
+                            if (details.length > 0) {
+                                msg += `<br><small class="text-muted">(${details.join(', ')})</small>`;
+                            }
+
+                            frappe.msgprint({
+                                title: 'Sync Up Complete',
+                                message: msg,
+                                indicator: r.message.failed > 0 ? 'orange' : 'green'
+                            });
+                        } else if (r.message && r.message.status === 'error') {
+                            frappe.msgprint({
+                                title: 'Sync Up Failed',
+                                message: r.message.message || 'Unknown error',
+                                indicator: 'red'
+                            });
+                        } else {
+                            frappe.msgprint('Sync completed. Check console for details.');
+                        }
+                    } else {
+                        console.error('Sync App: Error during sync up:', r.exc);
+                    }
+                }
             });
         });
     };
 
-    const run_sync_down = function() {
+    const run_sync_down = function () {
         frappe.confirm('Pull changes from Master?', () => {
+            console.log('Sync App: Starting sync down...');
             frappe.call({
                 method: 'sync_app.sync.api.sync_down_from_master',
                 freeze: true,
                 freeze_message: 'Pulling...',
-                callback: (r) => { if(!r.exc) frappe.msgprint(r.message); }
+                callback: (r) => {
+                    console.log('Sync App: Sync down response:', r);
+                    if (!r.exc) {
+                        if (r.message && r.message.status === 'success') {
+                            let msg = r.message.message || 'Synced successfully';
+
+                            // Add details about skipped/failed items
+                            let details = [];
+                            if (r.message.skipped > 0) details.push(`${r.message.skipped} skipped`);
+                            if (r.message.failed > 0) details.push(`${r.message.failed} failed`);
+
+                            if (details.length > 0) {
+                                msg += `<br><small class="text-muted">(${details.join(', ')})</small>`;
+                            }
+
+                            frappe.msgprint({
+                                title: 'Sync Down Complete',
+                                message: msg,
+                                indicator: r.message.failed > 0 ? 'orange' : 'green'
+                            });
+                        } else if (r.message && r.message.status === 'error') {
+                            frappe.msgprint({
+                                title: 'Sync Down Failed',
+                                message: r.message.message || 'Unknown error',
+                                indicator: 'red'
+                            });
+                        } else {
+                            frappe.msgprint('Sync completed. Check console for details.');
+                        }
+                    } else {
+                        console.error('Sync App: Error during sync down:', r.exc);
+                    }
+                }
             });
         });
     };
 
     // 3. Create the Floating Button
-    const create_floating_button = function() {
+    const create_floating_button = function () {
         // Remove existing button if it exists
         $('#sync-floating-btn').remove();
 
@@ -61,29 +127,29 @@ $(function() {
         $('body').append(btn_html);
 
         // Toggle menu on click
-        $('#sync-floating-btn button').on('click', function(e) {
+        $('#sync-floating-btn button').on('click', function (e) {
             e.stopPropagation();
             $('#sync-popup-menu').toggle();
         });
 
         // Attach actions
-        $('#float-sync-up').on('click', function(e) {
+        $('#float-sync-up').on('click', function (e) {
             e.preventDefault();
             $('#sync-popup-menu').hide();
             run_sync_up();
         });
 
-        $('#float-sync-down').on('click', function(e) {
+        $('#float-sync-down').on('click', function (e) {
             e.preventDefault();
             $('#sync-popup-menu').hide();
             run_sync_down();
         });
 
         // Close menu when clicking anywhere else
-        $(document).on('click', function() {
+        $(document).on('click', function () {
             $('#sync-popup-menu').hide();
         });
-        
+
         console.log("Sync App: Floating button created");
     };
 
