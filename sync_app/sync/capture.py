@@ -74,7 +74,35 @@ def capture_change(doc, method=None):
         log.doctype_name = doc.doctype
         log.document_name = doc.name
         log.operation = operation
-        log.doc_data = json.dumps(doc.as_dict(), default=str)
+        # Calculate diff for updates to support field-level sync
+        doc_data = doc.as_dict()
+        if operation == "update":
+            try:
+                before_doc = doc.get_doc_before_save()
+                if before_doc:
+                    diff = {"name": doc.name, "doctype": doc.doctype}
+                    has_changes = False
+                    
+                    for key, value in doc_data.items():
+                        # Skip standard fields that shouldn't trigger a sync on their own
+                        if key in ["modified", "modified_by", "creation", "owner", "idx", "docstatus", "hash", "_user_tags", "_comments", "_assign", "_liked_by"]:
+                            continue
+                            
+                        old_value = before_doc.get(key)
+                        if value != old_value:
+                            diff[key] = value
+                            has_changes = True
+                    
+                    # If we found specific changes, use the diff. 
+                    # If only standard fields changed (like modified), we might still want to sync? 
+                    # Usually 'update' implies something real changed.
+                    if has_changes:
+                        doc_data = diff
+            except Exception:
+                # Fallback to full doc if diff fails
+                pass
+
+        log.doc_data = json.dumps(doc_data, default=str)
         log.synced = 0
         log.sync_status = "pending"
         
