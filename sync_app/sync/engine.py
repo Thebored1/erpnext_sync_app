@@ -26,9 +26,14 @@ class OfflineSyncEngine:
         # Create authenticated session with HTTP Basic Auth (like curl uses)
         self.session = requests.Session()
         self.session.auth = (self.api_key, self.api_secret)
+        
+        # Get my device ID
+        self.device_id = config.custom_device_id
+        
         self.session.headers.update({
             "Accept": "application/json",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-Source-Device-ID": self.device_id or ""
         })
         
         self.stats = {"created": 0, "updated": 0, "submitted": 0, "failed": 0}

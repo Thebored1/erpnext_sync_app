@@ -77,7 +77,16 @@ def capture_change(doc, method=None):
         log.doc_data = json.dumps(doc.as_dict(), default=str)
         log.synced = 0
         log.sync_status = "pending"
-        log.device_id = get_device_id()
+        
+        # Check if this change came from a sync operation (via header)
+        source_device_id = None
+        try:
+            if frappe.request and hasattr(frappe.request, 'headers'):
+                source_device_id = frappe.request.headers.get('X-Source-Device-ID')
+        except Exception:
+            pass
+            
+        log.device_id = source_device_id or get_device_id()
         log.server_version = frappe.get_value("System Settings", None, "app_version") or "unknown"
         log.sync_attempt_count = 0
         
