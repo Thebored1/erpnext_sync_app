@@ -67,6 +67,16 @@ def capture_change(doc, method=None):
     # Determine what operation happened
     operation = _determine_operation(doc, method)
     
+    # Prevent duplicate logs: 'on_update' also fires during insert.
+    # If operation is 'update' but there is no previous document, it's actually an insert.
+    # Since 'after_insert' handles inserts, we should skip this 'update'.
+    if operation == "update":
+        try:
+            if doc.get_doc_before_save() is None:
+                return
+        except Exception:
+            pass
+    
     try:
         # Create transaction log entry
         log = frappe.new_doc("Sync Transaction Log")
@@ -74,13 +84,19 @@ def capture_change(doc, method=None):
         log.doctype_name = doc.doctype
         log.document_name = doc.name
         log.operation = operation
+        
         # Calculate diff for updates to support field-level sync
         doc_data = doc.as_dict()
         if operation == "update":
             try:
                 before_doc = doc.get_doc_before_save()
                 if before_doc:
-                    diff = {"name": doc.name, "doctype": doc.doctype}
+                    # Always include creation timestamp for collision detection
+                    diff = {
+                        "name": doc.name, 
+                        "doctype": doc.doctype,
+                        "creation": doc.creation
+                    }
                     has_changes = False
                     
                     for key, value in doc_data.items():
@@ -93,13 +109,9 @@ def capture_change(doc, method=None):
                             diff[key] = value
                             has_changes = True
                     
-                    # If we found specific changes, use the diff. 
-                    # If only standard fields changed (like modified), we might still want to sync? 
-                    # Usually 'update' implies something real changed.
                     if has_changes:
                         doc_data = diff
             except Exception:
-                # Fallback to full doc if diff fails
                 pass
 
         log.doc_data = json.dumps(doc_data, default=str)

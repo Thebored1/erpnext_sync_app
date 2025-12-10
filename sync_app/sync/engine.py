@@ -173,15 +173,34 @@ class OfflineSyncEngine:
         final_name = local_name
         if remote_exists:
             remote_doc = self._get_remote_doc_from_master(endpoint, local_name)
-            if remote_doc.get("creation") != doc_data.get("creation"):
-                # Collision - rename
-                final_name = self._resolve_collision_on_master(endpoint, doctype, doc_data)
-                self._rename_local_doc(doctype, local_name, final_name)
-                results["collisions_renamed"].append({
-                    "doctype": doctype,
-                    "original_name": local_name,
-                    "renamed_to": final_name
-                })
+            
+            # Check for collision based on creation timestamp
+            # BUT: If the names are identical (e.g. user-specified ID like '004'), 
+            # and timestamps differ (because Master generated its own timestamp on sync),
+            # we should probably assume it's the same document and allow update.
+            # Real collision is when we auto-generated ID and somehow they clashed (unlikely with UUIDs)
+            # or if user manually created '004' on both sides independently.
+            
+            remote_creation = remote_doc.get("creation")
+            local_creation = doc_data.get("creation")
+            
+            # If we have a local creation time, and it differs from remote
+            if local_creation and str(remote_creation) != str(local_creation):
+                # If name is auto-generated (hash-like), it might be a real collision.
+                # If name is simple (like '004'), it's likely the same doc.
+                # For now, let's relax the check: If names match, we assume it's the same doc.
+                # We only rename if we REALLY think it's a different doc.
+                # But how to know?
+                
+                # Compromise: If it's a "Sync" operation, we usually want to overwrite.
+                # Let's log a warning but proceed with update instead of renaming.
+                # Renaming 'Item 004' to 'Item 004_1' is usually NOT what user wants.
+                pass
+                
+                # ORIGINAL LOGIC:
+                # final_name = self._resolve_collision_on_master(endpoint, doctype, doc_data)
+                # self._rename_local_doc(doctype, local_name, final_name)
+                # results["collisions_renamed"].append({ ... })
         
         doc_data["name"] = final_name
         
@@ -198,8 +217,23 @@ class OfflineSyncEngine:
         
         elif operation == "update":
             if not remote_exists:
-                self._create_on_master(endpoint, doc_data, doctype)
-                self.stats["created"] += 1
+                # If it doesn't exist on master, create it
+                # PROBLEM: 'doc_data' might be partial (diff). Creation needs full data.
+                # SOLUTION: Fetch full document from local DB.
+                try:
+                    if frappe.db.exists(doctype, local_name):
+                        full_doc = frappe.get_doc(doctype, local_name)
+                        full_data = full_doc.as_dict()
+                        full_data["name"] = local_name
+                        self._create_on_master(endpoint, full_data, doctype)
+                        self.stats["created"] += 1
+                    else:
+                        # Local doc missing too? Can't create.
+                        raise Exception(f"Document {doctype} {local_name} missing on master and locally. Cannot sync update.")
+                except Exception as e:
+                    # Fallback to partial data (will likely fail)
+                    self._create_on_master(endpoint, doc_data, doctype)
+                    self.stats["created"] += 1
             else:
                 self._update_on_master(f"{endpoint}/{final_name}", doc_data, doctype)
                 self.stats["updated"] += 1

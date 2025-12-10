@@ -8,7 +8,8 @@ app_license = "mit"
 doc_events = {
     "*": {
         "after_insert": "sync_app.sync.capture.capture_change",
-        "after_save": "sync_app.sync.capture.capture_change",
+        "after_insert": "sync_app.sync.capture.capture_change",
+        "on_update": "sync_app.sync.capture.capture_change",
         "after_submit": "sync_app.sync.capture.capture_change",
         "after_amend": "sync_app.sync.capture.capture_change",
         "after_cancel": "sync_app.sync.capture.capture_change",
