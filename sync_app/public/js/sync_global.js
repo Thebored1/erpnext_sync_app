@@ -30,11 +30,33 @@ $(function () {
 
                             // Add details about skipped/failed items
                             let details = [];
-                            if (r.message.skipped > 0) details.push(`${r.message.skipped} skipped`);
-                            if (r.message.failed > 0) details.push(`${r.message.failed} failed`);
+
+                            // Helper to group by doctype
+                            const format_breakdown = (status) => {
+                                let counts = {};
+                                if (r.message.errors) {
+                                    r.message.errors.forEach(e => {
+                                        if (e.status === status) {
+                                            let dt = e.doctype || 'Unknown';
+                                            counts[dt] = (counts[dt] || 0) + 1;
+                                        }
+                                    });
+                                }
+                                let parts = Object.entries(counts).map(([dt, count]) => `${dt}: ${count}`);
+                                return parts.length > 0 ? `(${parts.join(', ')})` : '';
+                            };
+
+                            if (r.message.skipped > 0) {
+                                let bd = format_breakdown('skipped');
+                                details.push(`${r.message.skipped} skipped ${bd}`);
+                            }
+                            if (r.message.failed > 0) {
+                                let bd = format_breakdown('failed');
+                                details.push(`${r.message.failed} failed ${bd}`);
+                            }
 
                             if (details.length > 0) {
-                                msg += `<br><small class="text-muted">(${details.join(', ')})</small>`;
+                                msg += `<br><small class="text-muted">${details.join('<br>')}</small>`;
                             }
 
                             frappe.msgprint({
@@ -74,11 +96,33 @@ $(function () {
 
                             // Add details about skipped/failed items
                             let details = [];
-                            if (r.message.skipped > 0) details.push(`${r.message.skipped} skipped`);
-                            if (r.message.failed > 0) details.push(`${r.message.failed} failed`);
+
+                            // Helper to group by doctype
+                            const format_breakdown = (status) => {
+                                let counts = {};
+                                if (r.message.errors) {
+                                    r.message.errors.forEach(e => {
+                                        if (e.status === status) {
+                                            let dt = e.doctype || 'Unknown';
+                                            counts[dt] = (counts[dt] || 0) + 1;
+                                        }
+                                    });
+                                }
+                                let parts = Object.entries(counts).map(([dt, count]) => `${dt}: ${count}`);
+                                return parts.length > 0 ? `(${parts.join(', ')})` : '';
+                            };
+
+                            if (r.message.skipped > 0) {
+                                let bd = format_breakdown('skipped');
+                                details.push(`${r.message.skipped} skipped ${bd}`);
+                            }
+                            if (r.message.failed > 0) {
+                                let bd = format_breakdown('failed');
+                                details.push(`${r.message.failed} failed ${bd}`);
+                            }
 
                             if (details.length > 0) {
-                                msg += `<br><small class="text-muted">(${details.join(', ')})</small>`;
+                                msg += `<br><small class="text-muted">${details.join('<br>')}</small>`;
                             }
 
                             frappe.msgprint({

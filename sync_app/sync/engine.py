@@ -131,6 +131,7 @@ class OfflineSyncEngine:
                     results["skipped"] += 1
                     results["errors"].append({
                         "log": log_entry.name,
+                        "doctype": log_entry.doctype_name,
                         "error": error_msg,
                         "status": "skipped",
                         "reason": "Permanent error - DocType or module not found on master"
@@ -142,6 +143,7 @@ class OfflineSyncEngine:
                     results["failed"] += 1
                     results["errors"].append({
                         "log": log_entry.name,
+                        "doctype": log_entry.doctype_name,
                         "error": error_msg,
                         "status": "failed",
                         "attempt": log_doc.sync_attempt_count
@@ -355,6 +357,12 @@ class OfflineSyncEngine:
                     
                     if is_permanent_error:
                         results["skipped"] += 1
+                        results["errors"].append({
+                            "doc": remote_log.get("document_name"),
+                            "doctype": remote_log.get("doctype_name"),
+                            "error": error_msg,
+                            "status": "skipped"
+                        })
                         # If skipped, we still consider it "processed" for timestamp purposes
                         # so we don't get stuck on it forever
                         last_log_timestamp = remote_log.get("timestamp")
@@ -362,7 +370,9 @@ class OfflineSyncEngine:
                         results["failed"] += 1
                         results["errors"].append({
                             "doc": remote_log.get("document_name"),
-                            "error": str(e)
+                            "doctype": remote_log.get("doctype_name"),
+                            "error": str(e),
+                            "status": "failed"
                         })
             
             # Update last sync time to the timestamp of the last successfully processed (or skipped) log
@@ -481,8 +491,22 @@ class OfflineSyncEngine:
         response = self.session.put(endpoint, json=clean)
         if response.status_code not in [200]:
             error_text = response.text
-            if "DoesNotExistError" in error_text:
-                raise Exception(f"Document does not exist on master server.")
+            if "DoesNotExistError" in error_text or response.status_code == 404:
+                # Document doesn't exist on master (despite check?), try to create it
+                try:
+                    doc_name = doc_data.get("name")
+                    if doc_name and frappe.db.exists(doctype, doc_name):
+                        full_doc = frappe.get_doc(doctype, doc_name)
+                        full_data = full_doc.as_dict()
+                        full_data["name"] = doc_name
+                        
+                        # Use the base endpoint (without name) for creation
+                        base_endpoint = self.master_url + f"/api/resource/{doctype}"
+                        return self._create_on_master(base_endpoint, full_data, doctype)
+                    else:
+                        raise Exception(f"Document does not exist on master server and missing locally.")
+                except Exception as e:
+                    raise Exception(f"Document does not exist on master server. Fallback create failed: {str(e)}")
             else:
                 raise Exception(f"Update failed: {error_text[:500]}")
     

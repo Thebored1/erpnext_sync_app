@@ -54,7 +54,7 @@ def capture_change(doc, method=None):
     """
     
     # Skip if in special modes
-    if frappe.flags.in_rollback or frappe.flags.in_patch or frappe.flags.sync_in_progress:
+    if frappe.flags.in_rollback or frappe.flags.in_patch or frappe.flags.sync_in_progress or frappe.flags.in_setup_wizard:
         return
     
     # Import excluded list
